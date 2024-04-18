@@ -436,6 +436,9 @@ def build_prt_sim():
             nreleasepts=len(releasepts),
             packagedata=releasepts,
             perioddata=pd,
+            dev_vvorig=False,
+            dev_forceternary=True,
+            # release_timesrecord=list(range(10))
         )
 
     add_prp("A")
@@ -539,6 +542,7 @@ def write_models(*sims, silent=True):
 
 @timed
 def run_models(*sims, silent=True):
+    import pdb; pdb.set_trace()
     for sim in sims:
         if isinstance(sim, MFSimulation):
             success, buff = sim.run_simulation(silent=silent, report=True)
