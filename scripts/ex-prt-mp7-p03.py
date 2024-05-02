@@ -689,9 +689,9 @@ def plot_pathpoints(gwf, mf6pl, mp7pl=None, title=None):
         if title is not None:
             styles.heading(ax if mp7pl is None else ax[0], heading=title)
 
-        plot_points(fig, ax if mp7pl is None else ax[0], gwf, mf6pl)
+        plot_points(fig, ax if mp7pl is None else ax[0], gwf, mf6pl.sort_values(by=["t"]))
         if mp7pl is not None:
-            plot_points(fig, ax[1], gwf, mp7pl, colorbar=False)
+            plot_points(fig, ax[1], gwf, mp7pl.sort_values(by=["time"]), colorbar=False)
 
         if mp7pl is not None:
             ax[0].set_xlabel("MODFLOW 6 PRT")
@@ -893,6 +893,39 @@ def plot_endpoints(
             fig.savefig(figs_path / f"{fig_name}.png")
 
 
+def plot_diff(mf6pathlines, mp7pathlines, gwf):
+    from flopy.plot.plotutil import to_mp7_pathlines
+
+    kcols = ["time", "z", "y", "x"]
+    mf6pl = to_mp7_pathlines(mf6pathlines[mf6pathlines.ireason != 0])[kcols].sort_values(by=kcols).reset_index(drop=True)
+    mp7pl = to_mp7_pathlines(mp7pathlines)[kcols].sort_values(by=kcols).reset_index(drop=True)
+    assert mf6pl.shape == mp7pl.shape
+    diff = mf6pl.compare(mp7pl, result_names=("prt", "mp7"), keep_equal=True)
+    nl = 20
+    rows = []
+    from pprint import pprint
+    for n in kcols:
+        diff_subset = [diff.loc[r] for r in (diff[n].prt - diff[n].mp7).abs().nlargest(nl).index]
+        rows.extend(diff_subset)
+        print(f"{nl} largest differences for '{n}':")
+        pprint(diff_subset)
+
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(7, 7))
+    ax.set_aspect("equal")
+    mm = flopy.plot.PlotMapView(gwf, ax=ax)
+    mm.plot_grid()
+    mm.plot_bc("WEL", alpha=0.5, plotAll=True)
+    mm.plot_bc("RIV", alpha=0.5, plotAll=True)
+    mm.plot_bc("DRN", alpha=0.5, plotAll=True, color="green")
+    mf6_xs = [mf6pl.loc[row.name].x for row in rows]
+    mf6_ys = [mf6pl.loc[row.name].y for row in rows]
+    ax.scatter(mf6_xs, mf6_ys, c="red", s=2)
+    mp7_xs = [mp7pl.loc[row.name].x for row in rows]
+    mp7_ys = [mp7pl.loc[row.name].y for row in rows]
+    ax.scatter(mp7_xs, mp7_ys, c="blue", s=2)
+    plt.show()
+
+
 def plot_all(gwfsim):
     # load results
     gwf = gwfsim.get_model(gwf_name)
@@ -902,15 +935,8 @@ def plot_all(gwfsim):
         mp7_ws / timeseriesfile_mp7, mp7_ws / endpointfile_mp7, gwf
     )
 
-    from flopy.plot.plotutil import to_mp7_pathlines
-
-    kcols = ["x", "y", "z", "time"]
-    mf6pl = to_mp7_pathlines(mf6pathlines[mf6pathlines.ireason != 0])[kcols].sort_values(by=kcols).reset_index(drop=True)
-    mp7pl = to_mp7_pathlines(mp7pathlines)[kcols].sort_values(by=kcols).reset_index(drop=True)
-    assert mf6pl.shape == mp7pl.shape
-    # diff = mf6pl.compare(mp7pl)
-
-    import pdb; pdb.set_trace()
+    # debugging
+    plot_diff(mf6pathlines, mp7pathlines, gwf)
 
     # plot results
     plot_head(gwf, head=head)
@@ -931,7 +957,7 @@ def plot_all(gwfsim):
         mf6pathlines[mf6pathlines.ireason == 0],
         # mp7endpoints[mp7endpoints.time == 90000],
         title="Release points, colored by destination",
-        fig_name=f"{sim_name}-endpts",
+        fig_name=f"{sim_name}-rel-dest",
         color="destination",
     )
     plot_endpoints(
