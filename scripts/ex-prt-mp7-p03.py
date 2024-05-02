@@ -355,7 +355,7 @@ def build_gwf_model():
     return sim
 
 
-def build_prt_model():
+def build_prt_model(gwf):
     # simulation
     sim = flopy.mf6.MFSimulation(
         sim_name=sim_name, exe_name="mf6", version="mf6", sim_ws=prt_ws
@@ -392,12 +392,21 @@ def build_prt_model():
     # Instantiate the MODFLOW 6 prt model input package.
     flopy.mf6.ModflowPrtmip(prt, pname="mip", porosity=porosity, izone=izone)
 
-    # Instantiate the MODFLOW 6 PRT particle release point (PRP) package.
     # Convert MODPATH 7 particle configuration to format expected by PRP.
-    release_points = list(lrcpd.to_prp(prt.modelgrid, localz=True))
+    # release_points = list(lrcpd.to_prp(prt.modelgrid, localz=True))
+    mp7endpoints = get_mp7_endpoints(mp7_ws / endpointfile_mp7, gwf)
+    release_points = [
+        (i, *gwf.modelgrid.get_lrc([ep.node0])[0], ep.x0, ep.y0, 0.5, str(ep.particleid))
+        for i, ep in enumerate(mp7endpoints.itertuples())
+    ]
+    # mp7endpoints = mp7endpoints[mp7endpoints.time < 90200]
+    # import pdb; pdb.set_trace()
+
     # Specify custom release times starting 90,000 days into
     # the simulation, repeating every 20 days, for 200 days.
-    release_times = list(range(90000, 90201, 20))
+    release_times = list(range(90000, 90200, 20))
+
+    # Instantiate the MODFLOW 6 PRT particle release point (PRP) package.
     flopy.mf6.ModflowPrtprp(
         prt,
         pname="prp1",
@@ -408,6 +417,7 @@ def build_prt_model():
         # local z coordinates specified, compute global release
         # coord from cell top if saturated or water table if not
         local_z=True,
+        boundnames=True
     )
 
     # Instantiate the MODFLOW 6 prt output control package
@@ -607,13 +617,16 @@ def get_mp7_endpoints(path, gwf_model):
         mp7ep[n] += 1
 
     # add release time and termination time columns
-    mp7ep["time"] = mp7ep["time"] + 90000
-    mp7ep["t0"] = (
-        mp7ep.groupby(level=["particlegroup", "particleid"])
-        .apply(lambda x: x.time.min())
-        .to_frame(name="t0")
-        .t0
-    )
+    offset = 90000
+    mp7ep["time"] = mp7ep["time"] + offset
+    mp7ep["time0"] = mp7ep["time0"] + offset
+    mp7ep["t0"] = mp7ep["time0"]
+    # mp7ep["t0"] = (
+    #     mp7ep.groupby(level=["particlegroup", "particleid"])
+    #     .apply(lambda x: x.time.min())
+    #     .to_frame(name="t0")
+    #     .t0
+    # )
     mp7ep["tt"] = (
         mp7ep.groupby(level=["particlegroup", "particleid"])
         .apply(lambda x: x.time.max())
@@ -952,12 +965,30 @@ def plot_all(gwfsim):
     mp7endpoints = get_mp7_endpoints(mp7_ws / endpointfile_mp7, gwf)
     mp7pathlines = pd.concat([mp7timeseries, mp7endpoints])
 
+    # from flopy.plot.plotutil import to_mp7_pathlines
+
+    # mf6pl = to_mp7_pathlines(mf6pathlines[mf6pathlines.ireason == 5].reset_index(drop=True))
+    # mf6pl.particleid += 1
+    # kcols = ["x", "y", "z", "time", "particleid", "node"]
+    # mf6pl = mf6pl[kcols]
+    # mp7pl = to_mp7_pathlines(mp7timeseries.reset_index(drop=True))[kcols]
+
+    # for i in mf6pl.particleid.unique():
+    #     mf6 = mf6pl[mf6pl.particleid == i]
+    #     mp7 = mp7pl[mp7pl.particleid == i]
+    #     if mf6.shape != mp7.shape or not np.allclose(mf6, mp7):
+    #         import pdb; pdb.set_trace()
+
+    # assert np.allclose(mf6pl, mp7pl)
+
+    # import pdb; pdb.set_trace()
+
     # plot the results
     plot_head(gwf, head=head)
     plot_pathpoints(
         gwf,
         mf6pathlines,
-        # mp7pathlines,
+        mp7pathlines,
         title="Pathlines and 2000-day points, colored by travel time",
     )
     plot_pathpoints_3d(
@@ -993,8 +1024,24 @@ def plot_all(gwfsim):
 
 def scenario(silent=False):
     # build models
-    gwfsim, prtsim, mp7sim = build_models()
-    run_models(gwfsim, prtsim, mp7sim, silent=silent)
+    # gwfsim, prtsim, mp7sim = build_models()
+    # run_models(gwfsim, prtsim, mp7sim, silent=silent)
+
+    gwfsim = build_gwf_model()
+    gwfsim.write_simulation()
+    success, buff = gwfsim.run_simulation(silent=silent, report=True)
+    assert success, pformat(buff)
+
+    mp7sim = build_mp7_model(gwfsim.get_model(gwf_name))
+    mp7sim.write_input()
+    success, buff = mp7sim.run_model(silent=silent, report=True)
+    assert success, pformat(buff)
+
+    prtsim = build_prt_model(gwfsim.get_model(gwf_name))
+    prtsim.write_simulation()
+    success, buff = prtsim.run_simulation(silent=silent, report=True)
+    assert success, pformat(buff)
+
     plot_all(gwfsim)
 
 
