@@ -82,10 +82,8 @@ time_units = "days"
 # Model parameters
 nper = 1  # Number of periods
 nlay = 3  # Number of layers
-nrow = 28  # Number of rows
-ncol = 37  # Number of columns
-delr = 20.0  # Column width ($ft$)
-delc = 20.0  # Row width ($ft$)
+delr = 25.0  # Column width ($ft$)
+delc = 25.0  # Row width ($ft$)
 botm_str = "950.0, 920.0, 800.0"  # Layer bottom elevations ($ft$)
 kh_str = "50.0, 10.0, 100.0"  # Horizontal hydraulic conductivity ($ft/d$)
 kv_str = "10.0, 10.0, 20.0"  # Vertical hydraulic conductivity ($ft/d$)
@@ -110,19 +108,7 @@ kh = [float(value) for value in kh_str.split(",")]
 kv = [float(value) for value in kv_str.split(",")]
 
 # Define top elevations
-top = np.ones((28, 37)) * 990
-top[0:20,0:20] = 1000.
-top[0:19,0:19] = 1010.
-top[0:18,0:18] = 1020.
-top[0:17,0:17] = 1030.
-top[0:16,0:16] = 1040.
-top[0:15,0:15] = 1050.
-top[0:14,0:14] = 1060.
-top[0:13,0:13] = 1070.
-top[0:12,0:12] = 1080.
-top[0:11,0:11] = 1090.
-top[0:10,0:10] = 1100.
-top[0:9,0:9] = 1110.
+top = 990
 
 laytyp = [1, 0, 0]
 
@@ -130,133 +116,113 @@ laytyp = [1, 0, 0]
 # Negative discharge indicates pumping, positive injection.
 wells = [
     # layer, row, col, discharge
-    (0, 1, 5, -5000),
+    (0, 237, -5000),
 ]
-
-# Define the drain location.
-drain = (0, 5, (23, 36))
-
-# Define the stream location.
-str_iface = 6
-str_iflowface = -1
-str1_cells = [
-    (0, 1, 6), 
-    (0, 1, 7),
-    (0, 1, 8),
-    (0, 2, 8),
-    (0, 3, 9),
-    (0, 3, 10),
-    (0, 3, 11),
-    (0, 4, 12),
-    (0, 4, 13),
-    (0, 4, 14),
-    (0, 4, 15)
-]
-sd = []
-for cell in str1_cells:
-    k, i, j = cell
-    sd.append([(k, i, j), str_h, str_c, str_z, str_iface, str_iflowface])
 
 # Define the river location.
 riv_iface = 6
 riv_iflowface = -1
-rd = []
-for i in range(nrow):
-    rd.append([(0, i, ncol - 1), riv_h, riv_c, riv_z, riv_iface, riv_iflowface])
+riv_cells = [(0, 120)] + [(0, j) for j in range(35, 66)] + [(0, 124)]
+rd = [[(k, j), riv_h, riv_c, riv_z, riv_iface, riv_iflowface] for k, j in riv_cells]
 
 # -
 
-# ### Grid refinement
+# ### Grid creation and refinement
 #
 # [GRIDGEN](https://www.usgs.gov/software/gridgen-program-generating-unstructured-finite-volume-grids) can be used to create a quadpatch grid with a central refined region.
 #
 # The grid will have several refinement features. First, create the top-level (base) grid discretization.
 
+def get_disvprops():
+    from flopy.discretization import VertexGrid
+    from flopy.utils.triangle import Triangle as Triangle
+    from flopy.utils.voronoi import VoronoiGrid
 
+    domain = [(0, 0), (925, 0), (925, 700), (0, 700)]
+    tri = Triangle(angle=30, model_ws=workspace)
 
+    # create active domain first
+    tri.add_polygon(domain)
 
-# Configure locations for particle tracking to terminate. We
-# have three explicitly defined termination zones:
-#
-# - 2: the well in layer 1, at row 1, column 6
-# - 3: the drain in layer 1, running through row 6 from column 24-36
-# - 4: the stream in layer 1, in the upper left of the grid
-#
-# MODFLOW 6 reserves zone number 1 to indicate that particles
-# may move freely within the zone.
+    # create refinement features:
+    #   - hills in northwest, southwest, southeast
+    #   - river running diagonal on the right side
+    hill_contours = [
+        [
+            (10, 110),
+            (70, 110),
+            (70, 10)
+        ],
+        [
+            (10, 150),
+            (90, 190),
+            (130, 190),
+            (190, 170),
+            (170, 110),
+            (150, 10)
+        ],
+        [
+            (10, 190),
+            (110, 230),
+            (170, 230),
+            (210, 210),
+            (230, 110),
+            (210, 10)
+        ],
+        [
+            (10, 230),
+            (50, 250),
+            (110, 270),
+            (230, 230),
+            (270, 190),
+            (270, 130),
+            (250, 10)
+        ],
+        [
+            (10, 270),
+            (110, 290),
+            (250, 270),
+            (290, 250),
+            (310, 30)
+        ],
+        [
+            (70, 690),
+            (30, 530),
+            (210, 530),
+            (270, 490)
+        ]
+    ]
+    for poly in hill_contours:
+        tri.add_polygon(poly)
 
-# +
-def get_izone():
-    izone = []
+    river = [
+        list(zip(range(590, 891, 10), range(10, 651, 19)))
+    ]
+    for poly in river:
+        tri.add_polygon(poly)
 
-    # zone 1 is the default (non-terminating)
-    def ones():
-        return np.ones((nrow, ncol), dtype=np.int32)
+    tri.build(verbose=False)
 
-    # layer 1
-    l1 = ones()
-    l1[wells[0][1:3]] = 2  # well
-    l1[drain[1], drain[2][0] : drain[2][1]] = 3  # drain
-    for cell in sd:
-        l1[cell[0][1:3]] = 4  # stream
-    l1[:, ncol - 1] = 5  # river
-    izone.append(l1)
+    vor = VoronoiGrid(tri)
+    gridprops = vor.get_gridprops_vertexgrid()
+    voronoi_grid = VertexGrid(**gridprops, nlay=1)
 
-    return izone
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot()
+    ax.set_aspect("equal")
+    voronoi_grid.plot(ax=ax)
 
-izone = get_izone()
+    for i in range(voronoi_grid.ncpl):
+        x, y = voronoi_grid.xcellcenters[i], voronoi_grid.ycellcenters[i]
+        color = "grey"
+        ms = 2
+        ax.plot(x, y, "o", color=color, alpha=0.25, ms=ms)
+        ax.annotate(str(i + 1), (x, y), color="grey", alpha=0.5)
 
-# -
+    plt.show()
 
-#
-# Define particles to track. Particles are released from the top of a
-# 2x2 square of cells in the upper left of the midel grid's top layer.
-# MODPATH 7 uses a reference time value of 0.9 to start the release at
-# 90,000 days into the simulation.
+    return voronoi_grid, vor.get_disv_gridprops()
 
-# +
-
-rel_minl = rel_maxl = 0
-rel_minr = 23
-rel_maxr = 28
-rel_minc = 0
-rel_maxc = 6
-celldata = flopy.modpath.CellDataType(
-    drape=0,
-    rowcelldivisions=5,
-    columncelldivisions=5,
-    layercelldivisions=1,
-)
-lrcregions = [[rel_minl, rel_minr, rel_minc, rel_maxl, rel_maxr, rel_maxc]]
-lrcpd = flopy.modpath.LRCParticleData(
-    subdivisiondata=[celldata],
-    lrcregions=[lrcregions],
-)
-pg = flopy.modpath.ParticleGroupLRCTemplate(
-    particlegroupname="PG1",
-    particledata=lrcpd,
-    filename=f"{mp7_name}.pg1.sloc",
-)
-pgs = [pg]
-defaultiface = {"RECHARGE": 6, "ET": 6}
-
-# Define well and river cell numbers, used to extract and plot model results later.
-
-# Get well and river cell numbers
-nodes = {"well": [], "drain": [], "stream": [], "river": []}
-for k, i, j, _ in wells:
-    nodes[f"well"].append(ncol * (nrow * k + i) + j)
-for j in drain[2]:
-    k, i = drain[:2]
-    nodes["drain"].append([ncol * (nrow * k + i) + j])
-for strspec in sd:
-    k, i, j = strspec[0]
-    node = ncol * (nrow * k + i) + j
-    nodes["stream"].append(node)
-for rivspec in rd:
-    k, i, j = rivspec[0]
-    node = ncol * (nrow * k + i) + j
-    nodes["river"].append(node)
 # -
 
 # ### Model setup
@@ -295,54 +261,25 @@ def build_gwf_model():
     )
     sim.register_solution_package(ims, [gwf.name])
 
-    ms = flopy.modflow.Modflow()
-    dis = flopy.modflow.ModflowDis(
-        ms,
-        nlay=nlay,
-        nrow=nrow,
-        ncol=ncol,
-        delr=delr,
-        delc=delc,
-        top=top,
-        botm=botm,
-    )
+    voronoi_grid, disvkwargs = get_disvprops()
 
     # grid discretization
-    dis = flopy.mf6.modflow.mfgwfdis.ModflowGwfdis(
+    dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
         gwf,
-        pname="dis",
-        nlay=nlay,
-        nrow=nrow,
-        ncol=ncol,
-        length_units="FEET",
-        delr=delr,
-        delc=delc,
+        nlay=3,
         top=top,
         botm=botm,
+        **disvkwargs
     )
 
     # initial conditions
-    strt = np.ones((28, 37)) * 990.
-    strt[0:20,0:20] = 995.
-    strt[0:19,0:19] = 1000.
-    strt[0:18,0:18] = 1010.
-    strt[0:17,0:17] = 1020.
-    strt[0:16,0:16] = 1030.
-    strt[0:15,0:15] = 1040.
-    strt[0:14,0:14] = 1050.
-    strt[0:13,0:13] = 1060.
-    strt[0:12,0:12] = 1070.
-    strt[0:11,0:11] = 1080.
-    strt[0:10,0:10] = 1090.
-    strt[0:9,0:9] = 1100.
-    strt = np.stack([strt, strt, strt])
-    ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(gwf, pname="ic", strt=strt)
+    ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(gwf, pname="ic", strt=995)
 
     # node property flow
     npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
         gwf,
         pname="npf",
-        icelltype=laytyp,
+        # icelltype=laytyp,
         k=kh,
         k33=kv,
         save_flows=True,
@@ -363,6 +300,18 @@ def build_gwf_model():
         steady_state={0: True},
     )
 
+    # Define well and river cell numbers, used to extract and plot model results later.
+
+    # Get well and river cell numbers
+    nodes = {"well": [], "river": []}
+    for k, j, _ in wells:
+        nn = k * voronoi_grid.ncpl + j
+        nodes[f"well"].append(nn)
+    for rivspec in rd:
+        k, j = rivspec[0]
+        nn = k * voronoi_grid.ncpl + j
+        nodes["river"].append(nn)
+
     # wells
     wel = flopy.mf6.modflow.mfgwfwel.ModflowGwfwel(
         gwf,
@@ -370,20 +319,9 @@ def build_gwf_model():
         stress_period_data={0: wells},
     )
 
-    # streams
+    # river
     flopy.mf6.modflow.mfgwfriv.ModflowGwfriv(
-        gwf, auxiliary=["iface", "iflowface"], stress_period_data={0: sd + rd}
-    )
-
-    # drain (set auxiliary IFACE var to 6 for top of cell)
-    drn_iface = 6
-    drn_iflowface = -1
-    dd = [
-        [drain[0], drain[1], i + drain[2][0], 990., 100000.0, drn_iface, drn_iflowface]
-        for i in range(drain[2][1] - drain[2][0])
-    ]
-    drn = flopy.mf6.modflow.mfgwfdrn.ModflowGwfdrn(
-        gwf, auxiliary=["iface", "iflowface"], maxbound=13, stress_period_data={0: dd}
+        gwf, auxiliary=["iface", "iflowface"], stress_period_data={0: rd}
     )
 
     # output control
@@ -441,21 +379,20 @@ def plot_head(gwf, head):
         ax.set_aspect("equal")
         ilay = 2
         cint = 0.25
-        hmin = head[ilay, 0, :].min()
-        hmax = head[ilay, 0, :].max()
+        hmin = head[ilay].min()
+        hmax = head[ilay].max()
         styles.heading(ax=ax, heading=f"Head, layer {str(ilay + 1)}, time=0")
         mm = flopy.plot.PlotMapView(gwf, ax=ax, layer=ilay)
         mm.plot_grid(lw=0.5)
         mm.plot_bc("WEL", plotAll=True, color="red", alpha=0.5)
         mm.plot_bc("RIV", plotAll=True, color="blue", alpha=0.5)
-        mm.plot_bc("DRN", plotAll=True, color="green", alpha=0.5)
 
-        pc = mm.plot_array(head[ilay, :, :], edgecolor="black", alpha=0.1)
+        pc = mm.plot_array(head, edgecolor="black", alpha=0.1)
         cb = plt.colorbar(pc, shrink=0.25, pad=0.1)
         cb.ax.set_xlabel(r"Head ($ft$)")
 
         levels = np.arange(np.floor(hmin), np.ceil(hmax) + cint, cint)
-        cs = mm.contour_array(head[ilay, :, :], colors="white", levels=levels)
+        cs = mm.contour_array(head, colors="white", levels=levels)
         plt.clabel(cs, fmt="%.1f", colors="white", fontsize=11)
 
         ax.legend(
@@ -523,7 +460,7 @@ def plot_pathpoints_3d(gwf, title=None):
 def plot_all(gwfsim):
     # load results
     gwf = gwfsim.get_model(gwf_name)
-    head = flopy.utils.HeadFile(gwf_ws / (gwf_name + ".hds")).get_data()
+    head = gwf.output.head().get_data()
 
     # plot the results
     plot_head(gwf, head=head)
