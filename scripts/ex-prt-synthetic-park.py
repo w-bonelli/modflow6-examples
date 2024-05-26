@@ -20,11 +20,16 @@ import pathlib as pl
 from pprint import pformat
 
 import flopy
+from flopy.utils.gridintersect import GridIntersect
 import git
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from shapely.geometry import (
+    LineString,
+    Polygon,
+)
 from flopy.mf6 import MFSimulation
 from flopy.plot.styles import styles
 from matplotlib.lines import Line2D
@@ -116,7 +121,7 @@ laytyp = [1, 0, 0]
 # Negative discharge indicates pumping, positive injection.
 wells = [
     # layer, row, col, discharge
-    (0, 237, -5000),
+    (0, 237, 25000),
 ]
 
 # Define the river location.
@@ -124,6 +129,74 @@ riv_iface = 6
 riv_iflowface = -1
 riv_cells = [(0, 120)] + [(0, j) for j in range(35, 66)] + [(0, 124)]
 rd = [[(k, j), riv_h, riv_c, riv_z, riv_iface, riv_iflowface] for k, j in riv_cells]
+
+# Define hill contours.
+nw_hill_contours = [
+    [
+        (70, 690),
+        (30, 530),
+        (210, 530),
+        (270, 490)
+    ],
+]
+sw_hill_contours = [
+    [
+        (10, 110),
+        (70, 110),
+        (70, 10)
+    ],
+    [
+        (10, 150),
+        (90, 190),
+        (130, 190),
+        (190, 170),
+        (170, 110),
+        (150, 10)
+    ],
+    [
+        (10, 190),
+        (110, 230),
+        (170, 230),
+        (210, 210),
+        (230, 110),
+        (210, 10)
+    ],
+    [
+        (10, 230),
+        (50, 250),
+        (110, 270),
+        (230, 230),
+        (270, 190),
+        (270, 130),
+        (250, 10)
+    ],
+    [
+        (10, 270),
+        (110, 290),
+        (250, 270),
+        (290, 250),
+        (310, 30)
+    ],
+]
+se_hill_contours = [
+    [
+        (650, 10),
+        (890, 510),
+    ],
+    [
+        (710, 10),
+        (890, 450),
+    ],
+    [
+        (790, 10),
+        (890, 390),
+    ]
+]
+
+# Define river line.
+river_line = [
+    list(zip(range(590, 891, 10), range(10, 651, 19)))
+]
 
 # -
 
@@ -147,58 +220,10 @@ def get_disvprops():
     # create refinement features:
     #   - hills in northwest, southwest, southeast
     #   - river running diagonal on the right side
-    hill_contours = [
-        [
-            (10, 110),
-            (70, 110),
-            (70, 10)
-        ],
-        [
-            (10, 150),
-            (90, 190),
-            (130, 190),
-            (190, 170),
-            (170, 110),
-            (150, 10)
-        ],
-        [
-            (10, 190),
-            (110, 230),
-            (170, 230),
-            (210, 210),
-            (230, 110),
-            (210, 10)
-        ],
-        [
-            (10, 230),
-            (50, 250),
-            (110, 270),
-            (230, 230),
-            (270, 190),
-            (270, 130),
-            (250, 10)
-        ],
-        [
-            (10, 270),
-            (110, 290),
-            (250, 270),
-            (290, 250),
-            (310, 30)
-        ],
-        [
-            (70, 690),
-            (30, 530),
-            (210, 530),
-            (270, 490)
-        ]
-    ]
-    for poly in hill_contours:
+    for poly in sw_hill_contours + nw_hill_contours:
         tri.add_polygon(poly)
 
-    river = [
-        list(zip(range(590, 891, 10), range(10, 651, 19)))
-    ]
-    for poly in river:
+    for poly in river_line:
         tri.add_polygon(poly)
 
     tri.build(verbose=False)
@@ -206,20 +231,6 @@ def get_disvprops():
     vor = VoronoiGrid(tri)
     gridprops = vor.get_gridprops_vertexgrid()
     voronoi_grid = VertexGrid(**gridprops, nlay=1)
-
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot()
-    ax.set_aspect("equal")
-    voronoi_grid.plot(ax=ax)
-
-    for i in range(voronoi_grid.ncpl):
-        x, y = voronoi_grid.xcellcenters[i], voronoi_grid.ycellcenters[i]
-        color = "grey"
-        ms = 2
-        ax.plot(x, y, "o", color=color, alpha=0.25, ms=ms)
-        ax.annotate(str(i + 1), (x, y), color="grey", alpha=0.5)
-
-    plt.show()
 
     return voronoi_grid, vor.get_disv_gridprops()
 
@@ -262,18 +273,42 @@ def build_gwf_model():
     sim.register_solution_package(ims, [gwf.name])
 
     voronoi_grid, disvkwargs = get_disvprops()
+    gi = GridIntersect(voronoi_grid, method="vertex")
+    topa = np.ones((voronoi_grid.ncpl,)) * top
+    # southwest hill
+    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(int)
+    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(int)
+    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(int)
+    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(int)
+    topa[sw_hc3_cells] = 1010
+    topa[sw_hc2_cells] = 1030
+    topa[sw_hc1_cells] = 1050
+    topa[sw_hc0_cells] = 1070
+    # northwest hill
+    nw_hc0_cells = gi.intersect(LineString(nw_hill_contours[0])).cellids.astype(int)
+    topa[nw_hc0_cells] = 1010
+    # southeast hill
+    topa[gi.intersect(LineString(se_hill_contours[0])).cellids.astype(int)] = 1000
+    topa[gi.intersect(LineString(se_hill_contours[1])).cellids.astype(int)] = 1010
+    topa[gi.intersect(LineString(se_hill_contours[2])).cellids.astype(int)] = 1020
 
     # grid discretization
     dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
         gwf,
         nlay=3,
-        top=top,
+        top=topa,
         botm=botm,
         **disvkwargs
     )
 
     # initial conditions
-    ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(gwf, pname="ic", strt=995)
+    strt = np.ones((voronoi_grid.ncpl,)) * 995
+    strt[sw_hc3_cells] = topa[sw_hc3_cells] + (topa[sw_hc3_cells] - strt[sw_hc3_cells] / 2)
+    strt[sw_hc2_cells] = topa[sw_hc2_cells] + (topa[sw_hc2_cells] - strt[sw_hc2_cells] / 2)
+    strt[sw_hc1_cells] = topa[sw_hc1_cells] + (topa[sw_hc1_cells] - strt[sw_hc1_cells] / 2)
+    strt[sw_hc0_cells] = topa[sw_hc0_cells] + (topa[sw_hc0_cells] - strt[sw_hc0_cells] / 2)
+    strt = np.stack([strt, strt, strt])
+    ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(gwf, pname="ic", strt=strt)
 
     # node property flow
     npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
@@ -336,11 +371,109 @@ def build_gwf_model():
     return sim
 
 
+def build_prt_model():
+    # simulation
+    sim = flopy.mf6.MFSimulation(
+        sim_name=sim_name, exe_name="mf6", version="mf6", sim_ws=prt_ws
+    )
+
+    # temporal discretization
+    tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
+        sim,
+        pname="tdis",
+        time_units=time_units,
+        nper=len(perioddata),
+        perioddata=perioddata,
+    )
+
+    # Instantiate the MODFLOW 6 prt model
+    prt = flopy.mf6.ModflowPrt(
+        sim, modelname=prt_name, model_nam_file="{}.nam".format(prt_name)
+    )
+
+    # Instantiate the MODFLOW 6 prt discretization package
+    voronoi_grid, disvkwargs = get_disvprops()
+    gi = GridIntersect(voronoi_grid, method="vertex")
+    topa = np.ones((voronoi_grid.ncpl,)) * top
+    gi = GridIntersect(voronoi_grid, method="vertex")
+    topa = np.ones((voronoi_grid.ncpl,)) * top
+    # southwest hill
+    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(int)
+    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(int)
+    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(int)
+    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(int)
+    topa[sw_hc3_cells] = 1010
+    topa[sw_hc2_cells] = 1030
+    topa[sw_hc1_cells] = 1050
+    topa[sw_hc0_cells] = 1070
+    # northwest hill
+    nw_hc0_cells = gi.intersect(LineString(nw_hill_contours[0])).cellids.astype(int)
+    topa[nw_hc0_cells] = 1010
+    # southeast hill
+    topa[gi.intersect(LineString(se_hill_contours[0])).cellids.astype(int)] = 1000
+    topa[gi.intersect(LineString(se_hill_contours[1])).cellids.astype(int)] = 1010
+    topa[gi.intersect(LineString(se_hill_contours[2])).cellids.astype(int)] = 1020
+    dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
+        prt,
+        nlay=3,
+        top=topa,
+        botm=botm,
+        **disvkwargs
+    )
+
+    # Instantiate the MODFLOW 6 prt model input package.
+    flopy.mf6.ModflowPrtmip(prt, pname="mip", porosity=porosity)
+
+    # Convert MODPATH 7 particle configuration to format expected by PRP.
+    release_points = [[0, (0, 268), 25., 25., 1020.]]
+
+    # Instantiate the MODFLOW 6 PRT particle release point (PRP) package.
+    flopy.mf6.ModflowPrtprp(
+        prt,
+        pname="prp1",
+        filename="{}_1.prp".format(prt_name),
+        nreleasepts=len(release_points),
+        packagedata=release_points,
+        # local z coordinates specified, compute global release
+        # coord from cell top if saturated or water table if not
+        # local_z=True,
+        exit_solve_tolerance=1e-5,
+    )
+
+    # Instantiate the MODFLOW 6 prt output control package
+    flopy.mf6.ModflowPrtoc(
+        prt,
+        pname="oc",
+        budget_filerecord=[budgetfile_prt],
+        trackcsv_filerecord=[trackcsvfile_prt],
+        saverecord=[("BUDGET", "ALL")],
+    )
+
+    # Instantiate the MODFLOW 6 prt flow model interface
+    flopy.mf6.ModflowPrtfmi(
+        prt,
+        packagedata=[
+            ("GWFHEAD", pl.Path(f"../{gwf_ws.name}/{headfile}")),
+            ("GWFBUDGET", pl.Path(f"../{gwf_ws.name}/{budgetfile}")),
+        ],
+    )
+
+    # Create an explicit model solution (EMS) for the MODFLOW 6 prt model
+    ems = flopy.mf6.ModflowEms(
+        sim,
+        pname="ems",
+        filename=f"{prt_name}.ems",
+    )
+    sim.register_solution_package(ems, [prt.name])
+
+    return sim
+
+
 def build_models():
     gwfsim = build_gwf_model()
-    # prtsim = build_prt_model()
+    prtsim = build_prt_model()
     # mp7sim = build_mp7_model(gwfsim.get_model(gwf_name))
-    return gwfsim # , prtsim, mp7sim
+    return gwfsim, prtsim # , mp7sim
 
 
 def write_models(*sims, silent=False):
@@ -372,7 +505,7 @@ def run_models(*sims, silent=False):
 colordest = {"well": "red", "drain": "green", "stream": "blue"}
 
 
-def plot_head(gwf, head):
+def plot_head(gwf, head, pls):
     with styles.USGSPlot():
         fig, ax = plt.subplots(figsize=(7, 7))
         fig.tight_layout()
@@ -387,7 +520,7 @@ def plot_head(gwf, head):
         mm.plot_bc("WEL", plotAll=True, color="red", alpha=0.5)
         mm.plot_bc("RIV", plotAll=True, color="blue", alpha=0.5)
 
-        pc = mm.plot_array(head, edgecolor="black", alpha=0.1)
+        pc = mm.plot_array(head, edgecolor="black", alpha=0.25)
         cb = plt.colorbar(pc, shrink=0.25, pad=0.1)
         cb.ax.set_xlabel(r"Head ($ft$)")
 
@@ -398,11 +531,32 @@ def plot_head(gwf, head):
         ax.legend(
             handles=[
                 mpl.patches.Patch(color="red", label="Well", alpha=0.5),
-                mpl.patches.Patch(color="blue", label="Stream/River", alpha=0.5),
-                mpl.patches.Patch(color="green", label="Drain", alpha=0.5),
+                mpl.patches.Patch(color="blue", label="River", alpha=0.5),
             ],
             loc="upper right",
         )
+
+        mf6_plines = pls.groupby(["iprp", "irpt", "trelease"])
+        for ipl, ((iprp, irpt, trelease), pl) in enumerate(mf6_plines):
+            title = "DISV voronoi grid particle tracks"
+            pl.plot(
+                kind="line",
+                linestyle="--",
+                marker="o",
+                markersize=2,
+                x="x",
+                y="y",
+                ax=ax,
+                legend=False,
+                color="black",
+            )
+
+        for i in range(gwf.modelgrid.ncpl):
+            x, y = gwf.modelgrid.xcellcenters[i], gwf.modelgrid.ycellcenters[i]
+            color = "grey"
+            ms = 2
+            ax.plot(x, y, "o", color=color, alpha=0.25, ms=ms)
+            ax.annotate(str(i + 1), (x, y), color="grey", alpha=0.9)
 
         if plot_show:
             plt.show()
@@ -434,17 +588,7 @@ def plot_pathpoints_3d(gwf, title=None):
         p.enable_anti_aliasing()
         if title is not None:
             p.add_title(title, font_size=5)
-        p.add_mesh(gwf_mesh, opacity=0.25)
-        p.add_legend(
-            labels=[
-                ("Well (layer 3)", "red"),
-                ("Drain", "green"),
-                ("River", "blue"),
-            ],
-            bcolor="white",
-            face="r",
-            size=(0.15, 0.15),
-        )
+        p.add_mesh(gwf_mesh, opacity=0.02, scalars=gwf.output.head().get_data())
 
         p.camera.zoom(2)
         p.show()
@@ -461,9 +605,10 @@ def plot_all(gwfsim):
     # load results
     gwf = gwfsim.get_model(gwf_name)
     head = gwf.output.head().get_data()
+    pls = pd.read_csv(prt_ws / trackcsvfile_prt, na_filter=False)
 
     # plot the results
-    plot_head(gwf, head=head)
+    plot_head(gwf, head=head, pls=pls)
     plot_pathpoints_3d(gwf)
 
 # -
@@ -474,11 +619,11 @@ def plot_all(gwfsim):
 
 
 def scenario(silent=False):
-    gwfsim = build_models() # , prtsim, mp7sim = build_models()
+    gwfsim, prtsim = build_models()
     if write:
-        write_models(gwfsim, silent=silent)
+        write_models(gwfsim, prtsim, silent=silent)
     if run:
-        run_models(gwfsim, silent=silent)
+        run_models(gwfsim, prtsim, silent=silent)
     if plot:
         plot_all(gwfsim)
 
