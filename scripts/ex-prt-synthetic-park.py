@@ -20,20 +20,16 @@ import pathlib as pl
 from pprint import pformat
 
 import flopy
-from flopy.utils.gridintersect import GridIntersect
 import git
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from shapely.geometry import (
-    LineString,
-    Polygon,
-)
 from flopy.mf6 import MFSimulation
 from flopy.plot.styles import styles
-from matplotlib.lines import Line2D
+from flopy.utils.gridintersect import GridIntersect
 from modflow_devtools.misc import get_env, timed
+from shapely.geometry import LineString, Point, Polygon
 
 # Example name and workspace paths. If this example is running
 # in the git repository, use the folder structure described in
@@ -89,9 +85,9 @@ nper = 1  # Number of periods
 nlay = 3  # Number of layers
 delr = 25.0  # Column width ($ft$)
 delc = 25.0  # Row width ($ft$)
-botm_str = "950.0, 920.0, 800.0"  # Layer bottom elevations ($ft$)
+botm_str = "950.0, 940.0, 800.0"  # Layer bottom elevations ($ft$)
 kh_str = "50.0, 10.0, 100.0"  # Horizontal hydraulic conductivity ($ft/d$)
-kv_str = "10.0, 10.0, 20.0"  # Vertical hydraulic conductivity ($ft/d$)
+kv_str = "10.0, 5.0, 20.0"  # Vertical hydraulic conductivity ($ft/d$)
 rchv = 0.005  # Recharge rate ($ft/d$)
 str_h = 980.0  # Stream stage ($ft$)
 str_z = 960.0  # Stream bottom ($ft$)
@@ -121,7 +117,7 @@ laytyp = [1, 0, 0]
 # Negative discharge indicates pumping, positive injection.
 wells = [
     # layer, row, col, discharge
-    (0, 237, 25000),
+    (0, 237, -715000),
 ]
 
 # Define the river location.
@@ -132,51 +128,14 @@ rd = [[(k, j), riv_h, riv_c, riv_z, riv_iface, riv_iflowface] for k, j in riv_ce
 
 # Define hill contours.
 nw_hill_contours = [
-    [
-        (70, 690),
-        (30, 530),
-        (210, 530),
-        (270, 490)
-    ],
+    [(70, 690), (30, 530), (210, 530), (270, 490)],
 ]
 sw_hill_contours = [
-    [
-        (10, 110),
-        (70, 110),
-        (70, 10)
-    ],
-    [
-        (10, 150),
-        (90, 190),
-        (130, 190),
-        (190, 170),
-        (170, 110),
-        (150, 10)
-    ],
-    [
-        (10, 190),
-        (110, 230),
-        (170, 230),
-        (210, 210),
-        (230, 110),
-        (210, 10)
-    ],
-    [
-        (10, 230),
-        (50, 250),
-        (110, 270),
-        (230, 230),
-        (270, 190),
-        (270, 130),
-        (250, 10)
-    ],
-    [
-        (10, 270),
-        (110, 290),
-        (250, 270),
-        (290, 250),
-        (310, 30)
-    ],
+    [(10, 110), (70, 110), (70, 10)],
+    [(10, 150), (90, 190), (130, 190), (190, 170), (170, 110), (150, 10)],
+    [(10, 190), (110, 230), (170, 230), (210, 210), (230, 110), (210, 10)],
+    [(10, 230), (50, 250), (110, 270), (230, 230), (270, 190), (270, 130), (250, 10)],
+    [(10, 270), (110, 290), (250, 270), (290, 250), (310, 30)],
 ]
 se_hill_contours = [
     [
@@ -190,13 +149,11 @@ se_hill_contours = [
     [
         (790, 10),
         (890, 390),
-    ]
+    ],
 ]
 
 # Define river line.
-river_line = [
-    list(zip(range(590, 891, 10), range(10, 651, 19)))
-]
+river_line = [list(zip(range(590, 891, 10), range(10, 651, 19)))]
 
 # -
 
@@ -205,6 +162,7 @@ river_line = [
 # [GRIDGEN](https://www.usgs.gov/software/gridgen-program-generating-unstructured-finite-volume-grids) can be used to create a quadpatch grid with a central refined region.
 #
 # The grid will have several refinement features. First, create the top-level (base) grid discretization.
+
 
 def get_disvprops():
     from flopy.discretization import VertexGrid
@@ -234,6 +192,7 @@ def get_disvprops():
 
     return voronoi_grid, vor.get_disv_gridprops()
 
+
 # -
 
 # ### Model setup
@@ -242,6 +201,7 @@ def get_disvprops():
 
 
 # +
+
 
 def build_gwf_model():
     # simulation
@@ -276,10 +236,18 @@ def build_gwf_model():
     gi = GridIntersect(voronoi_grid, method="vertex")
     topa = np.ones((voronoi_grid.ncpl,)) * top
     # southwest hill
-    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(int)
-    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(int)
-    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(int)
-    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(int)
+    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(
+        int
+    )
     topa[sw_hc3_cells] = 1010
     topa[sw_hc2_cells] = 1030
     topa[sw_hc1_cells] = 1050
@@ -294,19 +262,23 @@ def build_gwf_model():
 
     # grid discretization
     dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
-        gwf,
-        nlay=3,
-        top=topa,
-        botm=botm,
-        **disvkwargs
+        gwf, nlay=3, top=topa, botm=botm, **disvkwargs
     )
 
     # initial conditions
     strt = np.ones((voronoi_grid.ncpl,)) * 995
-    strt[sw_hc3_cells] = topa[sw_hc3_cells] + (topa[sw_hc3_cells] - strt[sw_hc3_cells] / 2)
-    strt[sw_hc2_cells] = topa[sw_hc2_cells] + (topa[sw_hc2_cells] - strt[sw_hc2_cells] / 2)
-    strt[sw_hc1_cells] = topa[sw_hc1_cells] + (topa[sw_hc1_cells] - strt[sw_hc1_cells] / 2)
-    strt[sw_hc0_cells] = topa[sw_hc0_cells] + (topa[sw_hc0_cells] - strt[sw_hc0_cells] / 2)
+    strt[sw_hc3_cells] = topa[sw_hc3_cells] + (
+        topa[sw_hc3_cells] - strt[sw_hc3_cells] / 2
+    )
+    strt[sw_hc2_cells] = topa[sw_hc2_cells] + (
+        topa[sw_hc2_cells] - strt[sw_hc2_cells] / 2
+    )
+    strt[sw_hc1_cells] = topa[sw_hc1_cells] + (
+        topa[sw_hc1_cells] - strt[sw_hc1_cells] / 2
+    )
+    strt[sw_hc0_cells] = topa[sw_hc0_cells] + (
+        topa[sw_hc0_cells] - strt[sw_hc0_cells] / 2
+    )
     strt = np.stack([strt, strt, strt])
     ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(gwf, pname="ic", strt=strt)
 
@@ -321,6 +293,16 @@ def build_gwf_model():
         save_specific_discharge=True,
         save_saturation=True,
     )
+
+    # constant head boundary on right side
+    cells_left = gi.intersect(LineString([(0, 0), (0, 700)]))["cellids"]
+    cells_right = gi.intersect(LineString([(924, 0), (924, 700)]))["cellids"]
+    chdlist = []
+    for i, ic in enumerate(cells_left):
+        chdlist.append([(0, ic), 1010.0 + i])
+    for i, ic in enumerate(cells_right):
+        chdlist.append([(0, ic), 980.0 + i])
+    chd = flopy.mf6.ModflowGwfchd(gwf, stress_period_data=chdlist)
 
     # recharge
     rch = flopy.mf6.modflow.mfgwfrcha.ModflowGwfrcha(gwf, recharge=rchv)
@@ -341,7 +323,7 @@ def build_gwf_model():
     nodes = {"well": [], "river": []}
     for k, j, _ in wells:
         nn = k * voronoi_grid.ncpl + j
-        nodes[f"well"].append(nn)
+        nodes["well"].append(nn)
     for rivspec in rd:
         k, j = rivspec[0]
         nn = k * voronoi_grid.ncpl + j
@@ -398,10 +380,18 @@ def build_prt_model():
     gi = GridIntersect(voronoi_grid, method="vertex")
     topa = np.ones((voronoi_grid.ncpl,)) * top
     # southwest hill
-    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(int)
-    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(int)
-    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(int)
-    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(int)
+    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(
+        int
+    )
+    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(
+        int
+    )
     topa[sw_hc3_cells] = 1010
     topa[sw_hc2_cells] = 1030
     topa[sw_hc1_cells] = 1050
@@ -414,18 +404,24 @@ def build_prt_model():
     topa[gi.intersect(LineString(se_hill_contours[1])).cellids.astype(int)] = 1010
     topa[gi.intersect(LineString(se_hill_contours[2])).cellids.astype(int)] = 1020
     dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
-        prt,
-        nlay=3,
-        top=topa,
-        botm=botm,
-        **disvkwargs
+        prt, nlay=3, top=topa, botm=botm, **disvkwargs
     )
 
     # Instantiate the MODFLOW 6 prt model input package.
     flopy.mf6.ModflowPrtmip(prt, pname="mip", porosity=porosity)
 
     # Convert MODPATH 7 particle configuration to format expected by PRP.
-    release_points = [[0, (0, 268), 25., 25., 1020.]]
+    #     points = list(zip(, range(25, 50)))
+    points = np.transpose(
+        np.array(np.meshgrid(range(25, 50), range(25, 50))).reshape(2, -1)
+    )
+
+    def intersect(p):
+        return gi.intersect(Point(p))[0].cellids
+
+    release_points = [
+        [i, (0, intersect(p)), p[0], p[1], 1020.0] for i, p in enumerate(points)
+    ]
 
     # Instantiate the MODFLOW 6 PRT particle release point (PRP) package.
     flopy.mf6.ModflowPrtprp(
@@ -473,7 +469,7 @@ def build_models():
     gwfsim = build_gwf_model()
     prtsim = build_prt_model()
     # mp7sim = build_mp7_model(gwfsim.get_model(gwf_name))
-    return gwfsim, prtsim # , mp7sim
+    return gwfsim, prtsim  # , mp7sim
 
 
 def write_models(*sims, silent=False):
@@ -491,7 +487,8 @@ def run_models(*sims, silent=False):
             success, buff = sim.run_simulation(silent=silent, report=True)
         else:
             success, buff = sim.run_model(silent=silent, report=True)
-        # assert success, pformat(buff)
+        assert success, pformat(buff)
+
 
 # -
 
@@ -549,6 +546,7 @@ def plot_head(gwf, head, pls):
                 ax=ax,
                 legend=False,
                 color="black",
+                alpha=0.1,
             )
 
         for i in range(gwf.modelgrid.ncpl):
@@ -564,7 +562,7 @@ def plot_head(gwf, head, pls):
             fig.savefig(figs_path / f"{sim_name}-head")
 
 
-def plot_pathpoints_3d(gwf, title=None):
+def plot_pathpoints_3d(gwf, pls, title=None):
     import pyvista as pv
     from flopy.export.vtk import Vtk
 
@@ -573,11 +571,14 @@ def plot_pathpoints_3d(gwf, title=None):
     vert_exag = 1
     vtk = Vtk(model=gwf, binary=False, vertical_exageration=vert_exag, smooth=False)
     vtk.add_model(gwf)
-    # vtk.add_pathline_points(mf6pl)
-    gwf_mesh = vtk.to_pyvista()
+    vtk.add_pathline_points(pls)
+    gwf_mesh, prt_mesh = vtk.to_pyvista()
     gwf_mesh.rotate_z(110, point=axes.origin, inplace=True)
     gwf_mesh.rotate_y(-10, point=axes.origin, inplace=True)
     gwf_mesh.rotate_x(10, point=axes.origin, inplace=True)
+    prt_mesh.rotate_z(110, point=axes.origin, inplace=True)
+    prt_mesh.rotate_y(-10, point=axes.origin, inplace=True)
+    prt_mesh.rotate_x(10, point=axes.origin, inplace=True)
 
     def _plot(screenshot=False):
         p = pv.Plotter(
@@ -588,7 +589,22 @@ def plot_pathpoints_3d(gwf, title=None):
         p.enable_anti_aliasing()
         if title is not None:
             p.add_title(title, font_size=5)
-        p.add_mesh(gwf_mesh, opacity=0.02, scalars=gwf.output.head().get_data())
+        p.add_mesh(
+            gwf_mesh,
+            opacity=0.02,
+            # scalars=gwf.output.head().get_data(),
+            style="wireframe",
+        )
+        p.add_mesh(
+            prt_mesh,
+            # scalars="destzone",
+            # cmap=["red", "red", "green", "blue"],
+            point_size=4,
+            line_width=3,
+            render_points_as_spheres=True,
+            render_lines_as_tubes=True,
+            smooth_shading=True,
+        )
 
         p.camera.zoom(2)
         p.show()
@@ -609,7 +625,8 @@ def plot_all(gwfsim):
 
     # plot the results
     plot_head(gwf, head=head, pls=pls)
-    plot_pathpoints_3d(gwf)
+    plot_pathpoints_3d(gwf, pls=pls)
+
 
 # -
 
