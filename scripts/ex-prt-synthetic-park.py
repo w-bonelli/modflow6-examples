@@ -542,7 +542,7 @@ def plot_head(gwf, head, spdis, pls):
 
         pts = ax.scatter(pls["x"], pls["y"], s=2, c=pls["t"], cmap=cm["magma"])
         cb2 = plt.colorbar(pts, shrink=0.25)
-        cb2.ax.set_xlabel("Travel time (days)")
+        cb2.ax.set_xlabel("Travel time (years)")
 
         # plot node numbers
         # for i in range(gwf.modelgrid.ncpl):
