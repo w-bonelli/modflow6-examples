@@ -28,6 +28,7 @@ import pandas as pd
 from flopy.mf6 import MFSimulation
 from flopy.plot.styles import styles
 from flopy.utils.gridintersect import GridIntersect
+from matplotlib import colormaps as cm
 from modflow_devtools.misc import get_env, timed
 from shapely.geometry import LineString, Point, Polygon
 
@@ -117,7 +118,7 @@ laytyp = [1, 0, 0]
 # Negative discharge indicates pumping, positive injection.
 wells = [
     # layer, row, col, discharge
-    (0, 237, -715000),
+    (0, 237, -705000),
 ]
 
 # Define the river location.
@@ -193,6 +194,37 @@ def get_disvprops():
     return voronoi_grid, vor.get_disv_gridprops()
 
 
+voronoi_grid, disvkwargs = get_disvprops()
+gi = GridIntersect(voronoi_grid, method="vertex")
+topa = np.ones((voronoi_grid.ncpl,)) * top
+# southwest hill
+sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(int)
+sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(int)
+sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(int)
+sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(int)
+topa[sw_hc3_cells] = 1010
+topa[sw_hc2_cells] = 1030
+topa[sw_hc1_cells] = 1050
+topa[sw_hc0_cells] = 1070
+# northwest hill
+nw_hc0_cells = gi.intersect(LineString(nw_hill_contours[0])).cellids.astype(int)
+topa[nw_hc0_cells] = 1010
+# southeast hill
+topa[gi.intersect(LineString(se_hill_contours[0])).cellids.astype(int)] = 1000
+topa[gi.intersect(LineString(se_hill_contours[1])).cellids.astype(int)] = 1010
+topa[gi.intersect(LineString(se_hill_contours[2])).cellids.astype(int)] = 1020
+
+# Get well and river cell numbers
+nodes = {"well": [], "river": []}
+for k, j, _ in wells:
+    nn = k * voronoi_grid.ncpl + j
+    nodes["well"].append(nn)
+for rivspec in rd:
+    k, j = rivspec[0]
+    nn = k * voronoi_grid.ncpl + j
+    nodes["river"].append(nn)
+
+
 # -
 
 # ### Model setup
@@ -231,34 +263,6 @@ def build_gwf_model():
         complexity="SIMPLE",
     )
     sim.register_solution_package(ims, [gwf.name])
-
-    voronoi_grid, disvkwargs = get_disvprops()
-    gi = GridIntersect(voronoi_grid, method="vertex")
-    topa = np.ones((voronoi_grid.ncpl,)) * top
-    # southwest hill
-    sw_hc3_cells = gi.intersect(Polygon(sw_hill_contours[3] + [(0, 0)])).cellids.astype(
-        int
-    )
-    sw_hc2_cells = gi.intersect(Polygon(sw_hill_contours[2] + [(0, 0)])).cellids.astype(
-        int
-    )
-    sw_hc1_cells = gi.intersect(Polygon(sw_hill_contours[1] + [(0, 0)])).cellids.astype(
-        int
-    )
-    sw_hc0_cells = gi.intersect(Polygon(sw_hill_contours[0] + [(0, 0)])).cellids.astype(
-        int
-    )
-    topa[sw_hc3_cells] = 1010
-    topa[sw_hc2_cells] = 1030
-    topa[sw_hc1_cells] = 1050
-    topa[sw_hc0_cells] = 1070
-    # northwest hill
-    nw_hc0_cells = gi.intersect(LineString(nw_hill_contours[0])).cellids.astype(int)
-    topa[nw_hc0_cells] = 1010
-    # southeast hill
-    topa[gi.intersect(LineString(se_hill_contours[0])).cellids.astype(int)] = 1000
-    topa[gi.intersect(LineString(se_hill_contours[1])).cellids.astype(int)] = 1010
-    topa[gi.intersect(LineString(se_hill_contours[2])).cellids.astype(int)] = 1020
 
     # grid discretization
     dis = flopy.mf6.modflow.mfgwfdisv.ModflowGwfdisv(
@@ -316,18 +320,6 @@ def build_gwf_model():
         sy=0.1,
         steady_state={0: True},
     )
-
-    # Define well and river cell numbers, used to extract and plot model results later.
-
-    # Get well and river cell numbers
-    nodes = {"well": [], "river": []}
-    for k, j, _ in wells:
-        nn = k * voronoi_grid.ncpl + j
-        nodes["well"].append(nn)
-    for rivspec in rd:
-        k, j = rivspec[0]
-        nn = k * voronoi_grid.ncpl + j
-        nodes["river"].append(nn)
 
     # wells
     wel = flopy.mf6.modflow.mfgwfwel.ModflowGwfwel(
@@ -437,11 +429,13 @@ def build_prt_model():
     )
 
     # Instantiate the MODFLOW 6 prt output control package
+    tracktimes = list(range(0, 200, 2))
     flopy.mf6.ModflowPrtoc(
         prt,
         pname="oc",
         budget_filerecord=[budgetfile_prt],
         trackcsv_filerecord=[trackcsvfile_prt],
+        track_timesrecord=tracktimes,
         saverecord=[("BUDGET", "ALL")],
     )
 
@@ -502,13 +496,13 @@ def run_models(*sims, silent=False):
 colordest = {"well": "red", "drain": "green", "stream": "blue"}
 
 
-def plot_head(gwf, head, pls):
+def plot_head(gwf, head, spdis, pls):
     with styles.USGSPlot():
         fig, ax = plt.subplots(figsize=(7, 7))
         fig.tight_layout()
         ax.set_aspect("equal")
         ilay = 2
-        cint = 0.25
+        cint = 1
         hmin = head[ilay].min()
         hmax = head[ilay].max()
         styles.heading(ax=ax, heading=f"Head, layer {str(ilay + 1)}, time=0")
@@ -517,44 +511,46 @@ def plot_head(gwf, head, pls):
         mm.plot_bc("WEL", plotAll=True, color="red", alpha=0.5)
         mm.plot_bc("RIV", plotAll=True, color="blue", alpha=0.5)
 
-        pc = mm.plot_array(head, edgecolor="black", alpha=0.25)
-        cb = plt.colorbar(pc, shrink=0.25, pad=0.1)
+        # plot head array and contours
+        pc = mm.plot_array(head, edgecolor="black", alpha=0.25, cmap="viridis")
+        cb = plt.colorbar(pc, shrink=0.25)
         cb.ax.set_xlabel(r"Head ($ft$)")
-
         levels = np.arange(np.floor(hmin), np.ceil(hmax) + cint, cint)
-        cs = mm.contour_array(head, colors="white", levels=levels)
-        plt.clabel(cs, fmt="%.1f", colors="white", fontsize=11)
+        cs = mm.contour_array(head, colors="black", levels=levels, alpha=0.5)
+        plt.clabel(cs, fmt="%.1f", colors="black", fontsize=11)
 
+        # plot specific discharge
+        mm.plot_vector(*spdis, normalize=True, alpha=0.15)
+
+        # create legend
         ax.legend(
             handles=[
                 mpl.patches.Patch(color="red", label="Well", alpha=0.5),
                 mpl.patches.Patch(color="blue", label="River", alpha=0.5),
+                mpl.lines.Line2D(
+                    [0],
+                    [0],
+                    marker=">",
+                    linestyle="",
+                    label="Specific discharge",
+                    color="grey",
+                    markerfacecolor="gray",
+                ),
             ],
             loc="upper right",
         )
 
-        mf6_plines = pls.groupby(["iprp", "irpt", "trelease"])
-        for ipl, ((iprp, irpt, trelease), pl) in enumerate(mf6_plines):
-            title = "DISV voronoi grid particle tracks"
-            pl.plot(
-                kind="line",
-                linestyle="--",
-                marker="o",
-                markersize=2,
-                x="x",
-                y="y",
-                ax=ax,
-                legend=False,
-                color="black",
-                alpha=0.1,
-            )
+        pts = ax.scatter(pls["x"], pls["y"], s=2, c=pls["t"], cmap=cm["magma"])
+        cb2 = plt.colorbar(pts, shrink=0.25)
+        cb2.ax.set_xlabel("Travel time (days)")
 
-        for i in range(gwf.modelgrid.ncpl):
-            x, y = gwf.modelgrid.xcellcenters[i], gwf.modelgrid.ycellcenters[i]
-            color = "grey"
-            ms = 2
-            ax.plot(x, y, "o", color=color, alpha=0.25, ms=ms)
-            ax.annotate(str(i + 1), (x, y), color="grey", alpha=0.9)
+        # plot node numbers
+        # for i in range(gwf.modelgrid.ncpl):
+        #     x, y = gwf.modelgrid.xcellcenters[i], gwf.modelgrid.ycellcenters[i]
+        #     color = "grey"
+        #     ms = 2
+        #     ax.plot(x, y, "o", color=color, alpha=0.25, ms=ms)
+        #     ax.annotate(str(i + 1), (x, y), color="grey", alpha=0.9)
 
         if plot_show:
             plt.show()
@@ -580,6 +576,17 @@ def plot_pathpoints_3d(gwf, pls, title=None):
     prt_mesh.rotate_y(-10, point=axes.origin, inplace=True)
     prt_mesh.rotate_x(10, point=axes.origin, inplace=True)
 
+    # import pdb; pdb.set_trace()
+    top_mesh = gwf_mesh.remove_cells(
+        list(set(range(voronoi_grid.ncpl, voronoi_grid.ncpl * 3))), inplace=False
+    )
+    well_mesh = gwf_mesh.remove_cells(
+        list(set(range(voronoi_grid.nnodes * 3)) - set(nodes["well"])), inplace=False
+    )
+    river_mesh = gwf_mesh.remove_cells(
+        list(set(range(voronoi_grid.nnodes * 3)) - set(nodes["river"])), inplace=False
+    )
+
     def _plot(screenshot=False):
         p = pv.Plotter(
             window_size=[500, 500],
@@ -591,20 +598,28 @@ def plot_pathpoints_3d(gwf, pls, title=None):
             p.add_title(title, font_size=5)
         p.add_mesh(
             gwf_mesh,
-            opacity=0.02,
-            # scalars=gwf.output.head().get_data(),
-            style="wireframe",
+            opacity=0.05,
+            # style="wireframe",
         )
+        head = gwf.output.head().get_data()
+        p.add_mesh(
+            top_mesh, scalars=head[2], cmap="viridis", opacity=0.02, show_edges=False
+        )
+        p.add_mesh(well_mesh, color="red", opacity=0.5, show_edges=False)
+        p.add_mesh(river_mesh, color="blue", opacity=0.05, show_edges=False)
         p.add_mesh(
             prt_mesh,
-            # scalars="destzone",
-            # cmap=["red", "red", "green", "blue"],
-            point_size=4,
-            line_width=3,
+            scalars="t",
+            opacity=0.2,
+            cmap="magma",
+            point_size=3,
+            line_width=2,
             render_points_as_spheres=True,
             render_lines_as_tubes=True,
             smooth_shading=True,
         )
+        p.remove_scalar_bar("t")
+        p.remove_scalar_bar()
 
         p.camera.zoom(2)
         p.show()
@@ -621,10 +636,16 @@ def plot_all(gwfsim):
     # load results
     gwf = gwfsim.get_model(gwf_name)
     head = gwf.output.head().get_data()
+    bdobj = gwf.output.budget()
+    spdis = bdobj.get_data(text="DATA-SPDIS")[0]
+    qx, qy, _ = flopy.utils.postprocessing.get_specific_discharge(spdis, gwf)
     pls = pd.read_csv(prt_ws / trackcsvfile_prt, na_filter=False)
+    pls = pls[pls.ireason != 1]
+
+    # import pdb; pdb.set_trace()
 
     # plot the results
-    plot_head(gwf, head=head, pls=pls)
+    plot_head(gwf, head=head, spdis=(qx, qy), pls=pls)
     plot_pathpoints_3d(gwf, pls=pls)
 
 
