@@ -1,13 +1,10 @@
 # ## Synthetic Park Particle Tracking Problem
 #
-# Application of a MODFLOW 6 particle-tracking (PRT)
-# model and a MODPATH 7 (MP7) model to model solute
-# transport in a synthetic flow system simulating a
-# public park with a stream, a drain, a well, and a
-# river in a hilly landscape and steady-state flow.
-#
-# Particles are released in two groups, one at each
-# lower corner of the grid.
+# Particle tracking in a synthetic flow system modeled after
+# a public park with a stream and a well in a hilly landscape.
+# The model uses a voronoi grid with several refined regions.
+# The flow system is steady-state. Particles are released in
+# a square region in the southwest corner of the grid.
 #
 
 # ### Initial setup
