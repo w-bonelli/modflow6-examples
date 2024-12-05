@@ -18,6 +18,7 @@ import git
 import matplotlib.patches
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pooch
 from flopy.plot.styles import styles
 from modflow_devtools.misc import get_env, timed
@@ -166,8 +167,10 @@ def build_mf6gwf():
         gwf,
         save_specific_discharge=True,
         save_saturation=True,
+        save_flows=True,
         icelltype=1,
         k=hydraulic_conductivity,
+
     )
     flopy.mf6.ModflowGwfic(gwf, strt=600.0)
     chdspd = [[(k, 0, 0), h1] for k in range(nlay) if botm[k] < h1]
@@ -292,26 +295,101 @@ def build_mf6gwt():
     return sim
 
 
+def build_mf6prt():
+    print(f"Building mf6prt model...{sim_name}")
+    name = "track"
+    sim_ws = workspace / sim_name / "mf6prt"
+    gwf_ws = workspace / sim_name / "mf6gwf"
+    sim = flopy.mf6.MFSimulation(
+        sim_name=name,
+        sim_ws=sim_ws,
+        exe_name="mf6",
+        continue_=True,
+    )
+    tdis_ds = ((period1, 1, 1.0), (period2, 1, 1.0))
+    flopy.mf6.ModflowTdis(
+        sim, nper=len(tdis_ds), perioddata=tdis_ds, time_units=time_units
+    )
+    prt = flopy.mf6.ModflowPrt(sim, modelname=name)
+    dis = flopy.mf6.ModflowGwtdis(
+        prt,
+        length_units=length_units,
+        nlay=nlay,
+        nrow=nrow,
+        ncol=ncol,
+        delr=delr,
+        delc=delc,
+        top=top,
+        botm=botm,
+    )
+    mip = flopy.mf6.ModflowPrtmip(prt, pname="mip", porosity=porosity)
+    nns = range(prt.modelgrid.ncpl)
+    ids = prt.modelgrid.get_lrc(nns)
+    ccs = list(zip(prt.modelgrid.xcellcenters.ravel(), prt.modelgrid.ycellcenters.ravel()))
+    prpdata = [
+        (nn, *ids[nn], *ccs[nn], 0.5) for nn in nns
+    ]
+    prp = flopy.mf6.ModflowPrtprp(
+        prt,
+        pname="prp1a",
+        filename=f"{name}_1a.prp",
+        nreleasepts=len(prpdata),
+        packagedata=prpdata,
+        releasetimes=[(0,)],
+        nreleasetimes=1,
+        exit_solve_tolerance=1e-5,
+        extend_tracking=False,
+        local_z=True
+    )
+    budget_record = [f"{name}.cbc"]
+    track_record = [f"{name}.trk"]
+    trackcsv_record = [f"{name}.trk.csv"]
+    flopy.mf6.ModflowPrtoc(
+        prt,
+        pname="oc",
+        budget_filerecord=budget_record,
+        track_filerecord=track_record,
+        trackcsv_filerecord=trackcsv_record,
+        saverecord=[("BUDGET", "ALL")],
+    )
+    pd = [
+        ("GWFHEAD", pl.Path(f"../{gwf_ws.name}/flow.hds")),
+        ("GWFBUDGET", pl.Path(f"../{gwf_ws.name}/flow.bud")),
+    ]
+    fmi = flopy.mf6.ModflowPrtfmi(prt, packagedata=pd)
+    ems = flopy.mf6.ModflowEms(
+        sim,
+        pname="ems",
+        filename=f"{name}.ems",
+    )
+    sim.register_solution_package(ems, [prt.name])
+    return sim
+
+
 def build_models():
     sim_mf6gwf = build_mf6gwf()
     sim_mf6gwt = build_mf6gwt()
+    sim_mf6prt = build_mf6prt()
     sim_mf2005 = None  # build_mf2005()
     sim_mt3dms = None  # build_mt3dms(sim_mf2005)
-    return sim_mf6gwf, sim_mf6gwt, sim_mf2005, sim_mt3dms
+    return sim_mf6gwf, sim_mf6gwt, sim_mf6prt, sim_mf2005, sim_mt3dms
 
 
 def write_models(sims, silent=True):
-    sim_mf6gwf, sim_mf6gwt, sim_mf2005, sim_mt3dms = sims
+    sim_mf6gwf, sim_mf6gwt, sim_mf6prt, sim_mf2005, sim_mt3dms = sims
     sim_mf6gwf.write_simulation(silent=silent)
     sim_mf6gwt.write_simulation(silent=silent)
+    sim_mf6prt.write_simulation(silent=silent)
 
 
 @timed
 def run_models(sims, silent=True):
-    sim_mf6gwf, sim_mf6gwt, sim_mf2005, sim_mt3dms = sims
+    sim_mf6gwf, sim_mf6gwt, sim_mf6prt, sim_mf2005, sim_mt3dms = sims
     success, buff = sim_mf6gwf.run_simulation(silent=silent)
     assert success, buff
     success, buff = sim_mf6gwt.run_simulation(silent=silent)
+    assert success, buff
+    success, buff = sim_mf6prt.run_simulation(silent=silent)
     assert success, buff
 
 
@@ -329,15 +407,15 @@ figure_size = (7.5, 3)
 def plot_results(sims):
     print("Plotting model results...")
     plot_head_results(sims)
-    plot_conc_results(sims)
-    plot_cvt_results(sims)
-    if plot_save and gif_save:
-        make_animated_gif(sims)
+    # plot_conc_results(sims)
+    # plot_cvt_results(sims)
+    # if plot_save and gif_save:
+    #     make_animated_gif(sims)
 
 
 def plot_head_results(sims):
     print("Plotting head model results...")
-    sim_mf6gwf, _, _, _ = sims
+    sim_mf6gwf, _, sim_mf6prt, _, _ = sims
     gwf = sim_mf6gwf.flow
     botm = gwf.dis.botm.array
 
@@ -359,6 +437,10 @@ def plot_head_results(sims):
         ax.set_ylabel("elevation (m)")
         ax.set_aspect(plotaspect)
 
+        pathlines = pd.read_csv(sim_mf6prt.sim_path / f"track.trk.csv")
+        for _, pl in pathlines.groupby("irpt"):
+            pl.plot("x", "z", lw=.4, ax=ax, alpha=.4, legend=False)
+
         if plot_show:
             plt.show()
         if plot_save:
@@ -371,7 +453,7 @@ def plot_head_results(sims):
 
 def plot_conc_results(sims):
     print("Plotting conc model results...")
-    sim_mf6gwf, sim_mf6gwt, _, _ = sims
+    sim_mf6gwf, sim_mf6gwt, _, _, _ = sims
     gwf = sim_mf6gwf.flow
     gwt = sim_mf6gwt.trans
     botm = gwf.dis.botm.array
@@ -440,7 +522,7 @@ def make_animated_gif(sims):
     from matplotlib.animation import FuncAnimation, PillowWriter
 
     print("Animating conc model results...")
-    sim_mf6gwf, sim_mf6gwt, _, _ = sims
+    sim_mf6gwf, sim_mf6gwt, _, _, _ = sims
     gwf = sim_mf6gwf.flow
     gwt = sim_mf6gwt.trans
     botm = gwf.dis.botm.array
@@ -495,7 +577,7 @@ def make_animated_gif(sims):
 
 def plot_cvt_results(sims):
     print("Plotting cvt model results...")
-    _, sim_mf6gwt, _, _ = sims
+    _, sim_mf6gwt, _, _, _ = sims
     gwt = sim_mf6gwt.trans
 
     with styles.USGSMap():
@@ -579,13 +661,13 @@ def plot_cvt_results(sims):
 # +
 def scenario(silent=True):
     sim = build_models()
-    if write:
-        write_models(sim, silent=silent)
-    if run:
-        run_models(sim, silent=silent)
+    # if write:
+    #     write_models(sim, silent=silent)
+    # if run:
+    #     run_models(sim, silent=silent)
     if plot:
         plot_results(sim)
 
 
-scenario()
+scenario(silent=False)
 # -
